@@ -1,0 +1,557 @@
+---
+title: "Kaggle - Super Heroes Data "
+author: "Sneha Kannan"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Dataset: https://www.kaggle.com/claudiodavi/superhero-set/data
+
+This is a dataset from Kaggle about Superheroes. It consists of two parts, one containing demographic type of information and another with a list of super powers of the superheroes.
+
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(janitor)
+library(scales)
+library(knitr)
+library(kableExtra)
+library(patchwork)
+library(skimr)
+
+theme_set(theme_bw())
+
+# clean_names() funtion will make sure that the column names in the dataset will have underscore , alphabets and numbers. All column names will be converted to lower case by default
+heroes_information_df <- read.csv('data/heroes_information.csv') %>% 
+                          janitor::clean_names()
+super_hero_powers_df <- read.csv('data/super_hero_powers.csv') %>% 
+                          janitor::clean_names()
+```
+
+#### **Data Cleaning**
+
+There are 19 rows with duplicate value of *names* of superheroes. This needs to be investigated.
+
+```{r}
+heroes_information_df %>% 
+  summarise(num_distinct_superheroes = n_distinct(name),
+            num_superheroes = n())
+```
+
+tabyl() function is useful to find out the count of factor levels in a column. Here is a look at those superheroes which occur more than once. 
+
+```{r}
+dup_names <- heroes_information_df %>%
+  janitor::tabyl(name) %>%
+  filter(n>1)
+
+#Contains names of superheroes which are repeated
+dup_names
+
+#Another way to do the same thing
+
+# dup_names <- heroes_information_df %>% 
+#   group_by(name) %>% 
+#   summarise(n = n()) %>% 
+#   filter(n > 1)
+```
+
+Here's the dataframe containing the duplicate superheroes
+
+```{r}
+heroes_information_df %>% 
+  filter(name %in% dup_names$name) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
+```
+
+From this table, there are primarily two different reasons for the duplicates:
+
+**1. ** Between two rows, some columns are missing for the same superhero (maybe double entry where one of it is incomplete). Example: x = 49 and 50, 62 and 63. For such groups it's better to remove the one with incomplete data
+
+**2. ** Incorrect data in one row compared to the other
+
+Removing duplicates because of (1) was easy. To remove duplicates caused by (2) a lot of manual work was involved. On Googling about the superheroes, I removed those which had incorrect information. 
+
+```{r}
+#Manual cleaning by removing rows
+dup_rows <- c(23, 48, 50, 62, 69, 96, 115, 123, 155, 259, 289, 290, 481, 496, 617, 623, 624, 674, 696)
+
+#Deduped dataframe with the superheroes information
+heroes_information_deduped_df <- heroes_information_df %>% 
+  filter(!(x %in% dup_rows))
+
+#Taking a look at the dataframe again
+heroes_information_deduped_df %>% 
+  filter(name %in% dup_names$name) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
+```
+
+#### **How many different Publishers are there?**
+
+```{r}
+heroes_information_deduped_df %>% 
+    summarise(num_distinct_publishers = n_distinct(publisher))
+```
+
+There are 25 distinct publishers. 
+
+
+```{r}
+heroes_information_deduped_df %>% 
+  group_by(publisher) %>% 
+  summarise(n = n()) %>% 
+  mutate(total = sum(n),
+         pct = n/total,
+         publisher = fct_reorder(publisher, pct)) %>% 
+  ggplot(aes(x=publisher, y = pct)) +
+  geom_col() +
+  scale_y_continuous(labels = percent, breaks = seq(0, .60, .05)) +
+  coord_flip() +
+  ggtitle('Distribution of superheroes created among all Publishers')
+```
+
+**DC Comics** and **Marvel Comics** are the biggest publishers creating about 29% and 53% of the superheroes respectively 
+
+Using fct_lump() function to lump together all publishers other than Marvel and DC into 'Other' since the rest of the publishers form a small part out of the entire population.
+
+```{r}
+
+heroes_information_deduped_df %>% 
+  mutate(publisher = fct_lump(publisher, n = 2)) %>% 
+  group_by(publisher) %>% 
+  summarise(n = n()) %>% 
+  mutate(total = sum(n),
+         pct = n/total,
+         publisher = fct_reorder(publisher, pct)) %>% 
+  ggplot(aes(x=publisher, y = pct)) +
+  geom_col() +
+  scale_y_continuous(labels = percent, breaks = seq(0, .60, .05)) +
+  ggtitle('Distribution of superheroes created among all Publishers - after fct_lump()')
+
+```
+
+#### **Do the publishers create more good or bad heroes?**
+
+DC and Marvel have a similar distribution among good and bad superheroes. Approximately 65% of their superheroes are good and about 30% of them are bad. The rest of the publishers ('Other') seem to produce a slightly higher percentage of good heroes, about 72%. 
+
+```{r}
+heroes_information_deduped_df %>% 
+  mutate(publisher = fct_lump(publisher, n = 2)) %>% 
+  group_by(publisher, alignment) %>% 
+  summarize(n = n()) %>% 
+  mutate(percentage = n / sum(n)) %>% 
+  ggplot(aes(x=alignment, y = percentage, fill = publisher))+
+  geom_col(position = "dodge2") +
+  scale_y_continuous(labels = percent, breaks = seq(0, .80, .10)) +
+  ggtitle('Distribution of Good and Bad superheroes within Publishers')
+  
+```
+
+#### **Percentage Distributions**
+
+These plots show the frequency distribution among some features of Superheroes [Hair Color, Eye Color] by specific groups [Alignment, Producers, Gender]
+
+I've used the [patchwork](https://patchwork.data-imaginist.com/index.html) package to show the plots. I wanted to order the percentages by the descending order but was unable to do it the way I wanted to when I used facet_wrap in ggplot(). This [link](https://stackoverflow.com/questions/52029785/sorting-in-ggplot-with-facet-wrap) from Stackoverflow has some workarounds but the end result was some unordered plots because not all features are present among all the groups. Thanks to patchwork for helping me create these plots. 
+
+##### **Hair Color - Alignment**
+
+```{r}
+
+hair_good <- heroes_information_deduped_df %>% 
+  filter(alignment %in% c('good')) %>% 
+  mutate(hair_color = tolower(hair_color),
+         hair_color = ifelse(hair_color == 'brownn', 'brown', hair_color)) %>% 
+  group_by(hair_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(total = sum(n),
+         pct = n/total,
+         hair_color = fct_reorder(hair_color, pct)) %>% 
+  ggplot(aes(hair_color, pct)) +
+  geom_col() +
+  scale_y_continuous(labels = percent)+
+  coord_flip()+
+  ggtitle('Good Heroes - Hair Color') 
+
+hair_bad <- heroes_information_deduped_df %>% 
+  filter(alignment %in% c('bad')) %>% 
+  mutate(hair_color = tolower(hair_color),
+         hair_color = ifelse(hair_color == 'brownn', 'brown', hair_color)) %>% 
+  group_by(hair_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(total = sum(n),
+         pct = n/total,
+         hair_color = fct_reorder(hair_color, pct)) %>% 
+  ggplot(aes(hair_color, pct)) +
+  geom_col() +
+  scale_y_continuous(labels = percent)+
+  theme(axis.title.y=element_blank()) +
+  coord_flip()+
+  ggtitle('Bad Heroes - Hair Color') 
+
+#Using the patchwork package to join two plots together
+hair_good + hair_bad
+
+```
+
+Among the good superheroes, data is missing for 25% of them. 25% of them have black hair and 17.5% of them have blond hair. The good heroes have a wider spectrum of colors for their hair compared to the bad heroes. 
+
+For the bad superheroes, data is missing for 25% of them. Black is the most common hair color followed by 'No Hair'. 
+
+##### **Hair Color - Publisher**
+
+```{r}
+hair_dc <- heroes_information_deduped_df %>% 
+  filter(publisher %in% c('DC Comics')) %>% 
+  mutate(hair_color = tolower(hair_color),
+         hair_color = ifelse(hair_color == 'brownn', 'brown', hair_color)) %>% 
+  group_by(hair_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         hair_color = fct_reorder(hair_color, pct)) %>% 
+  ggplot(aes(x=hair_color, y = pct)) +
+  geom_col() +
+  coord_flip()+
+  ggtitle('DC Comics - Hair Color') 
+
+hair_marvel <- heroes_information_deduped_df %>% 
+  filter(publisher %in% c('Marvel Comics')) %>% 
+  mutate(hair_color = tolower(hair_color),
+         hair_color = ifelse(hair_color == 'brownn', 'brown', hair_color)) %>% 
+  group_by(hair_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         hair_color = fct_reorder(hair_color, pct)) %>% 
+  ggplot(aes(x=hair_color, y = pct)) +
+  geom_col() +
+  theme(axis.title.y=element_blank()) +
+  coord_flip()+
+  ggtitle('Marvel Comics - Hair Color') 
+
+hair_dc + hair_marvel
+```
+
+Black, Red and Brown are the most common hair colors among superheroes from DC Comics while Black, Blond and Brown are most common hair colors from Marvel Comics. 
+
+Super heroes from Marvel Comics have a more colors for their hair than those from DC Comics. 
+
+##### **Eye Color - Alignment**
+
+```{r}
+eye_good <- heroes_information_deduped_df %>% 
+  filter(alignment %in% c('good')) %>% 
+  mutate(eye_color = tolower(eye_color)
+         ) %>% 
+  group_by(eye_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         eye_color = fct_reorder(eye_color, pct)) %>% 
+  ggplot(aes(x=eye_color, y = pct)) +
+  geom_col() +
+  coord_flip()+
+  ggtitle('Good Heroes - Eye Color') 
+
+eye_bad <- heroes_information_deduped_df %>% 
+  filter(alignment %in% c('bad')) %>% 
+  mutate(eye_color = tolower(eye_color)
+         ) %>% 
+  group_by(eye_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         eye_color = fct_reorder(eye_color, pct)) %>% 
+  ggplot(aes(x=eye_color, y = pct)) +
+  geom_col() +
+  theme(axis.title.y=element_blank()) +
+  coord_flip()+
+  ggtitle('Bad Heroes - Eye Color') 
+
+eye_good + eye_bad
+```
+
+34% of the good superheroes have blue eyes while 23% of the bad superheroes have blue eyes. 12% of bad superheroes have red eyes but less than 5% of the good superheroes have red eyes. Brown is a common eye color among good and bad superheroes. 
+
+##### **Eye Color - Publisher**
+
+```{r}
+eye_dc <- heroes_information_deduped_df %>% 
+  filter(publisher %in% c('DC Comics')) %>% 
+  mutate(eye_color = tolower(eye_color)
+         ) %>% 
+  group_by(eye_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         eye_color = fct_reorder(eye_color, pct)) %>% 
+  ggplot(aes(x=eye_color, y = pct)) +
+  geom_col() +
+  coord_flip()+
+  ggtitle('DC Comics - Eye Color') 
+
+eye_marvel <- heroes_information_deduped_df %>% 
+  filter(publisher %in% c('Marvel Comics')) %>% 
+  mutate(eye_color = tolower(eye_color)
+         ) %>% 
+  group_by(eye_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         eye_color = fct_reorder(eye_color, pct)) %>% 
+  ggplot(aes(x=eye_color, y = pct)) +
+  geom_col() +
+  theme(axis.title.y=element_blank()) +
+  coord_flip()+
+  ggtitle('Marvel Comics - Eye Color') 
+
+eye_dc + eye_marvel
+```
+
+38% of DC Comics and 33% of Marvel Comics superheroes have blue eyes. Brown eyed superheroes are more common among Marvel Comics and Green eyed superheroes are more common among DC Comics. 
+
+##### **Eye Color - Gender**
+
+68.5% of the superheroes are Men and 27.5% of them are Women. 4% don't have a specified gender
+
+```{r}
+heroes_information_deduped_df %>%  
+  group_by(gender) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n), 1))
+  
+```
+
+
+```{r}
+eye_male <- heroes_information_deduped_df %>% 
+  filter(gender == 'Male') %>% 
+  mutate(eye_color = tolower(eye_color)
+         ) %>% 
+  group_by(eye_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         eye_color = fct_reorder(eye_color, pct)) %>% 
+  ggplot(aes(x=eye_color, y = pct)) +
+  geom_col() +
+  coord_flip()+
+  ggtitle('Male') 
+
+eye_female <- heroes_information_deduped_df %>% 
+  filter(gender == 'Female') %>% 
+  mutate(eye_color = tolower(eye_color)
+         ) %>% 
+  group_by(eye_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         eye_color = fct_reorder(eye_color, pct)) %>% 
+  ggplot(aes(x=eye_color, y = pct)) +
+  geom_col() +
+  theme(axis.title.y=element_blank()) +
+  coord_flip()+
+  ggtitle('Female') 
+
+eye_null <- heroes_information_deduped_df %>% 
+  filter(gender == '-') %>% 
+  mutate(eye_color = tolower(eye_color)
+         ) %>% 
+  group_by(eye_color) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n*100/sum(n),1),
+         eye_color = fct_reorder(eye_color, pct)) %>% 
+  ggplot(aes(x=eye_color, y = pct)) +
+  geom_col() +
+  theme(axis.title.y=element_blank()) +
+  coord_flip()+
+  ggtitle('No Gender') 
+
+p1 <- (eye_male + eye_female + eye_null)
+
+p1 + plot_annotation(title = 'Gender - Eye Color')
+```
+
+Among the men superheroes, blue, brown and red are the most common hair colors. Blue, green and brown are the most common colors among women. Blue forms close to 30% of the men and women's population. There are a lot more women having green eyes than men. 
+
+#### **Height and Weight of superheroes**
+
+##### **Height**
+
+```{r}
+heroes_information_deduped_df %>% 
+  filter(!gender %in% c('-'),
+         alignment %in% c('good', 'bad')) %>% 
+  mutate(height = ifelse(height < 0, NA, height),
+         weight = ifelse(weight < 0, NA, weight)) %>% 
+  ggplot(aes(x=alignment, y=height, fill=gender)) +
+  geom_boxplot() 
+
+```
+
+There are a 186 superheroes with missing height values. There are a lot of outliers among Men - good and bad, compared to Women. As expected, Men weigh heavier than women. 
+
+The function skim() from [skimr](https://github.com/ropensci/skimr#skimr) package is useful to find out the Five Number summary for numeric values and also has the histograms for the frequency distribution.  
+
+Bad Men follow a normal distribution. Good Men and Women are skewed right while Bad Women are skewed left.  
+
+```{r}
+heroes_information_deduped_df %>% 
+  filter(!gender %in% c('-'),
+         alignment %in% c('good', 'bad')) %>% 
+  mutate(height = ifelse(height < 0, NA, height),
+         weight = ifelse(weight < 0, NA, weight)) %>% 
+  group_by(gender, alignment) %>% 
+  skimr::skim(height) %>% 
+  select(-skim_type, -skim_variable, -n_missing, -numeric.sd) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE) 
+  
+```
+
+##### **Weight**
+
+```{r}
+heroes_information_deduped_df %>% 
+  filter(!gender %in% c('-'),
+         alignment %in% c('good', 'bad')) %>% 
+  mutate(height = ifelse(height < 0, NA, height),
+         weight = ifelse(weight < 0, NA, weight)) %>% 
+  ggplot(aes(x=alignment, y=weight, fill=gender)) +
+  geom_boxplot() 
+
+```
+
+There are 205 superheroes with missing weight. Among all the bad superheroes, men have a wider spread in weight than women. 
+
+
+```{r}
+heroes_information_deduped_df %>% 
+  filter(!gender %in% c('-'),
+         alignment %in% c('good', 'bad')) %>% 
+  mutate(height = ifelse(height < 0, NA, height),
+         weight = ifelse(weight < 0, NA, weight)) %>% 
+  group_by(gender, alignment) %>% 
+  skimr::skim(weight) %>% 
+  select(-skim_type, -skim_variable, -n_missing, -numeric.sd) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE) 
+  
+
+```
+
+All the four groups are skewed right. 
+
+#### **Superhero Powers**
+
+```{r}
+super_hero_powers_df %>% 
+  select(1:7) %>% 
+  head() %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
+```
+
+It has a list of all the superhero powers for the heroes. As seen from the sample data, the columns were read in as factors. The below code snippet maps the columns from True and False to 1 and 0.
+
+```{r}
+super_hero_powers_transformed_df <- super_hero_powers_df %>% 
+  mutate_if(is.factor, as.character) %>% 
+  mutate_if(!names(.) %in% c('hero_names'), 
+            list(~as.logical(.))) %>% 
+  mutate_if(is.logical,as.numeric) 
+
+super_hero_powers_transformed_df %>% 
+  select(1:7) %>% 
+  head() %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
+  
+```
+
+
+There are some rows which are present in one dataframe but not in the other. I have decided to do an inner_join between the two dataframes so only the common rows are selected.
+
+```{r warning=FALSE}
+nrow(heroes_information_deduped_df)
+nrow(super_hero_powers_transformed_df)
+
+superhero_df <- heroes_information_deduped_df %>% 
+  inner_join(super_hero_powers_transformed_df, by = c("name" = "hero_names"))
+
+nrow(superhero_df)
+```
+
+#### **Superhero Powers**
+
+For analyzing this dataset, I have selected only those superheoes who are present in both the datasets (hero_information and superhero_powers)
+
+```{r}
+ super_hero_powers_transformed_df %>% 
+  filter(hero_names %in% heroes_information_deduped_df$name) %>% 
+  summarise_if(is.numeric, sum, na.rm=TRUE) %>% 
+  pivot_longer(
+    cols = colnames(.),
+    names_to = "power", 
+    values_to = "count") %>% 
+    mutate(pct = count/643) %>% 
+    arrange(desc(count)) %>% 
+  filter(pct > 0.1) %>% 
+  mutate(power = fct_reorder(power, pct)) %>% 
+  ggplot(aes(x=power, y = pct))+
+  geom_col() +
+  scale_y_continuous(labels = percent, breaks = seq(0, .60, .05)) +
+  coord_flip() +
+  ggtitle('Common Superhero Powers')
+```
+
+As one should expect, the most common superhero power is *Super Strength*, 55% of the heroes have this power. *Stamina*, *Durability*, *Super Speed*, *Agility*, *Flight* are the top powers among the superheroes. 
+
+```{r}
+ super_hero_powers_transformed_df %>% 
+  filter(hero_names %in% heroes_information_deduped_df$name) %>% 
+  mutate(num_powers = select(., agility:omniscient) %>% rowSums(na.rm=TRUE)) %>% 
+  select(hero_names, num_powers) %>% 
+  arrange(desc(num_powers)) %>% 
+  filter(num_powers > 25) %>% 
+  mutate(hero_names = fct_reorder(hero_names, num_powers)) %>% 
+  ggplot(aes(x=hero_names, y = num_powers)) +
+  geom_col() +
+  coord_flip()
+```
+
+*Spectre* created by DC Comics is the most powerful hero with almost 50 superpowers. *Amazo* comes a close second with about 44 superpowers. *Martian Manhunter*, *Living Tribunal* and *Man of Miracles* make it to the top 5 group in terms of number of superheroes. 
+
+```{r warning=FALSE}
+super_hero_powers_transformed_df %>% 
+  inner_join(heroes_information_deduped_df[c('name', 'publisher', 'gender', 'alignment')], by = c("hero_names" = "name")) %>% 
+  mutate(num_powers = select(., agility:omniscient) %>% rowSums(na.rm=TRUE)) %>% 
+  select(hero_names, publisher, gender, alignment, num_powers) %>% 
+  filter(alignment %in% c('good', 'bad')) %>% 
+  mutate(publisher = fct_lump(publisher, n = 2)) %>% 
+  ggplot(aes(x=alignment, num_powers, fill = publisher)) +
+  geom_boxplot()
+```
+
+Comparing the superpowers among the different publishers between good and bad heroes, we can see that bad heroes created by DC Comics have a higher median than those from Marvel Comics. All those created by publishers who are not DC and Marvel seem to have a wider range of the number of superpowers. 
+
+Median value of the number of superpowers is almost the same for good superheroes from DC and Marvel Comics.
+
+#### Summary
+
+I've practiced primary the following functions during the Exploratory Analysis of the superheroes datasets:
+
+* n_distinct()
+* tabyl() in janitor
+* fct_reorder()
+* fct_lump()
+* patchwork package for plots
+* coord_flip()
+* skim() in skimr
+* box_plots
+* inner_join
+* mutate_if()
+* summarise_if()
+* pivot_longer()
+* rowSums()
+
+This will be a good reference in case I want to refer to some of these functions in the future. 
+
+
